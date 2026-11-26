@@ -1,0 +1,58 @@
+name: Sync upstream branches
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'mcajun87'
+
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Sync branches from upstream
+        env:
+          UPSTREAM_URL: "https://github.com/xiaomi-msm8998-devs/twrp_device_xiaomi_chiron"
+          TARGET_BRANCHES: "android-12 android-12.1 new"
+          UPSTREAM_BRANCHES: "android-12 android-12.1 new"
+        run: |
+          set -euo pipefail
+          read -r -a targets <<< "$TARGET_BRANCHES"
+          read -r -a upstreams <<< "$UPSTREAM_BRANCHES"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
+
+          failed=0
+          for i in "${!targets[@]}"; do
+            branch="${targets[$i]}"
+            upstream_branch="${upstreams[$i]}"
+            echo "::group::sync $branch <- upstream/$upstream_branch"
+            git fetch upstream "$upstream_branch" --no-tags
+            git checkout -B "$branch" "origin/$branch"
+            if git merge --no-edit "upstream/$upstream_branch"; then
+              git push origin "HEAD:$branch"
+              echo "OK $branch"
+            else
+              echo "::error::branch $branch has conflicts; skipped"
+              git merge --abort || true
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
